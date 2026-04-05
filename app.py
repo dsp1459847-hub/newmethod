@@ -8,23 +8,23 @@ from statsmodels.tsa.arima.model import ARIMA
 import io
 
 # --- 1. पेज सेटअप ---
-st.set_page_config(page_title="MAYA AI: ARIMA Edition", layout="wide")
-st.markdown("<h1 style='text-align: center; color: #1a73e8;'>📈 MAYA AI: ARIMA & Trend Analysis</h1>", unsafe_allow_html=True)
+st.set_page_config(page_title="MAYA AI: Supreme ARIMA", layout="wide")
+st.markdown("<h1 style='text-align: center; color: #1a73e8;'>🔮 MAYA AI: Supreme Date-Wise Analysis</h1>", unsafe_allow_html=True)
 
-# --- 2. डेटा प्रोसेसिंग (Manual Indexing) ---
-def process_data(uploaded_file):
+# --- 2. डेटा प्रोसेसिंग ---
+def process_data_manual(uploaded_file):
     try:
         df = pd.read_excel(io.BytesIO(uploaded_file.getvalue()), engine='openpyxl')
-        df.columns = range(df.shape[1]) # Column indexing 0, 1, 2...
+        df.columns = range(df.shape[1])
         
-        date_idx = 1 # Column B (Date)
-        shift_indices = range(2, 9) # Column C to I (Shifts)
+        date_idx = 1 # Column B
+        shift_indices = range(2, 9) # Column C to I
         shift_names = ["DS", "FD", "GD", "GL", "DB", "SG", "DL"]
         
         temp_list = []
         for _, row in df.iterrows():
             try:
-                dt = pd.to_datetime(row[date_idx], errors='coerce')
+                dt = pd.to_datetime(row[date_idx], errors='coerce').date()
                 if pd.isna(dt): continue
                 for i, s_idx in enumerate(shift_indices):
                     val = str(row[s_idx]).strip().split('.')[0]
@@ -33,59 +33,78 @@ def process_data(uploaded_file):
             except: continue
         return pd.DataFrame(temp_list), shift_names
     except Exception as e:
-        st.error(f"Error reading file: {e}")
         return None, None
 
-# --- 3. ARIMA Prediction & Plotting ---
-def run_arima_logic(df, shift_name):
-    s_data = df[df['shift'] == shift_name].sort_values('date')
-    if len(s_data) < 20:
-        return "Low Data", None
+# --- 3. ARIMA & Logic ---
+def get_combined_logic(clean_df, target_shift, sel_date):
+    # तारीख के आधार पर फिल्टर (केवल चुनी तारीख से पहले का डेटा)
+    history = clean_df[(clean_df['shift'] == target_shift) & (clean_df['date'] < sel_date)].sort_values('date')
     
-    y = s_data['num'].values
+    # Same Day Match (अगर उस दिन का रिजल्ट शीट में है)
+    today = clean_df[(clean_df['shift'] == target_shift) & (clean_df['date'] == sel_date)]
+    same_day_res = f"📍 **SAME DAY:** {int(today.iloc[0]['num']):02d}" if not today.empty else "📍 **SAME DAY:** --"
+
+    if len(history) < 15:
+        return f"{same_day_res}\n\n⚠️ Kam Data Hai", [], None
+
+    y = history['num'].values
     
-    # ARIMA Model (p=5, d=1, q=0)
+    # HOT & DUE Logic
+    hot_10 = [n for n, c in Counter(y[-50:]).most_common(10)]
+    last_seen = {n: 999 for n in range(100)}
+    for i, n in enumerate(y): last_seen[n] = len(y) - i
+    due_nums = [x[0] for x in sorted(last_seen.items(), key=lambda x: x[1], reverse=True)[:10]]
+
+    # ARIMA Prediction
+    fig = None
     try:
         model = ARIMA(y, order=(5, 1, 0))
         model_fit = model.fit()
         forecast = model_fit.forecast(steps=1)
-        next_val = int(forecast[0]) % 100 # 00-99 के बीच रखने के लिए
+        arima_pred = int(forecast[0]) % 100
         
-        # Graph बनाना
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(y[-20:], label='Actual Trend', marker='o', color='#1a73e8')
-        ax.axhline(y=next_val, color='r', linestyle='--', label=f'Predicted: {next_val:02d}')
-        ax.set_title(f"{shift_name} Last 20 Draws & Next Prediction")
+        # Graph
+        fig, ax = plt.subplots(figsize=(8, 3))
+        ax.plot(y[-15:], marker='o', label='Past')
+        ax.axhline(y=arima_pred, color='r', linestyle='--', label=f'ARIMA: {arima_pred:02d}')
+        ax.set_title(f"{target_shift} Trend")
         ax.legend()
-        
-        return next_val, fig
-    except:
-        return "Error", None
+    except: arima_pred = "--"
 
-# --- 4. UI Dashboard ---
+    display = f"{same_day_res}\n\n🔥 **HOT:** {', '.join([f'{n:02d}' for n in hot_10])}\n\n⏳ **DUE:** {', '.join([f'{n:02d}' for n in due_nums])}\n\n🎯 **ARIMA:** {arima_pred:02d}"
+    
+    return display, hot_10, fig
+
+# --- 4. UI ---
 uploaded_file = st.file_uploader("📂 अपनी Excel फ़ाइल अपलोड करें", type=['xlsx'])
 
 if uploaded_file:
-    clean_df, shift_names = process_data(uploaded_file)
-    
+    clean_df, shift_names = process_data_manual(uploaded_file)
     if clean_df is not None:
-        st.success("✅ डेटा लोड हो गया!")
-        target_date = st.date_input("📅 तारीख चुनें:", datetime.date.today())
+        target_date = st.date_input("📅 प्रेडिक्शन की तारीख चुनें:", datetime.date.today())
         
-        if st.button("🚀 ARIMA विश्लेषण शुरू करें"):
-            # Columns बनाना चार्ट्स के लिए
-            cols = st.columns(len(shift_names))
-            
-            for i, name in enumerate(shift_names):
-                with cols[i]:
-                    pred, fig = run_arima_logic(clean_df, name)
-                    st.metric(label=f"🎯 {name} Next", value=f"{pred:02d}" if isinstance(pred, int) else pred)
-                    if fig:
-                        st.pyplot(fig) # ग्राफ यहाँ दिखेगा
+        if st.button("🚀 मास्टर विश्लेषण शुरू करें"):
+            row_main = {"Type": "🎯 ANALYTICS"}
+            graphs = {}
+
+            for name in shift_names:
+                display, h_list, fig = get_combined_logic(clean_df, name, target_date)
+                row_main[name] = display
+                graphs[name] = fig
 
             st.write("---")
-            st.info("💡 **ARIMA Logic:** यह मॉडल पिछले नंबरों के उतार-चढ़ाव (Volatility) को देखकर अगले अंक का अनुमान लगाता है। लाल बिंदीदार रेखा (Red Dashed Line) संभावित अगले अंक को दर्शाती है।")
-            st.balloons()
-else:
-    st.info("एक्सेल फ़ाइल अपलोड करें।")
+            st.subheader(f"✅ शिफ्ट-वाइज प्रेडिक्शन चार्ट ({target_date})")
+            st.table(pd.DataFrame([row_main]))
 
+            st.write("---")
+            st.subheader("📈 शिफ्ट-वाइज ट्रेंड ग्राफ (ARIMA)")
+            g_cols = st.columns(len(shift_names))
+            for i, name in enumerate(shift_names):
+                with g_cols[i]:
+                    st.write(f"**{name} Graph**")
+                    if graphs[name]:
+                        st.pyplot(graphs[name])
+                    else:
+                        st.write("No Graph")
+            st.balloons()
+            
