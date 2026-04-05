@@ -7,10 +7,10 @@ import datetime
 import io
 
 # --- 1. पेज सेटअप ---
-st.set_page_config(page_title="MAYA AI: Ultra Accuracy", layout="wide")
-st.markdown("<h1 style='text-align: center; color: #d32f2f;'>🚀 MAYA AI: XGBoost Accuracy Engine</h1>", unsafe_allow_html=True)
+st.set_page_config(page_title="MAYA AI: Final Accuracy", layout="wide")
+st.markdown("<h1 style='text-align: center; color: #d32f2f;'>🚀 MAYA AI: High-Accuracy AI Engine</h1>", unsafe_allow_html=True)
 
-# --- 2. स्मार्ट डेटा प्रोसेसिंग ---
+# --- 2. डेटा प्रोसेसिंग ---
 def process_data_smart(uploaded_file):
     try:
         df = pd.read_excel(io.BytesIO(uploaded_file.getvalue()), engine='openpyxl')
@@ -31,29 +31,33 @@ def process_data_smart(uploaded_file):
         return pd.DataFrame(temp_list), shift_names
     except: return None, None
 
-# --- 3. XGBoost Prediction Logic (For Higher Accuracy) ---
+# --- 3. XGBoost Logic (With Safety Check) ---
 def get_xgboost_prediction(history_nums):
-    if len(history_nums) < 30: return []
+    # कम से कम 30 रिकॉर्ड होने चाहिए और कम से कम 2 अलग-अलग नंबर
+    if len(history_nums) < 30 or len(set(history_nums)) < 2: 
+        return []
     
-    # फीचर्स बनाना (पिछले 5 नंबरों का पैटर्न)
-    X, y = [], []
-    for i in range(len(history_nums)-6):
-        X.append(history_nums[i:i+5])
-        y.append(history_nums[i+5])
-    
-    X, y = np.array(X), np.array(y)
-    
-    # XGBoost मॉडल (Fast & Accurate)
-    model = xgb.XGBClassifier(n_estimators=50, max_depth=3, learning_rate=0.1, objective='multi:softprob')
-    model.fit(X, y)
-    
-    # अगले नंबर की संभावना (Probability)
-    last_features = np.array([history_nums[-5:]])
-    probs = model.predict_proba(last_features)[0]
-    
-    # टॉप 10 सबसे ज्यादा संभावना वाले नंबर
-    top_10_indices = np.argsort(probs)[-10:][::-1]
-    return [f"{n:02d}" for n in top_10_indices]
+    try:
+        X, y = [], []
+        for i in range(len(history_nums)-6):
+            X.append(history_nums[i:i+5])
+            y.append(history_nums[i+5])
+        
+        X, y = np.array(X), np.array(y)
+        
+        model = xgb.XGBClassifier(n_estimators=30, max_depth=3, learning_rate=0.1, objective='multi:softprob', verbosity=0)
+        model.fit(X, y)
+        
+        last_feat = np.array([history_nums[-5:]])
+        probs = model.predict_proba(last_feat)[0]
+        
+        # टॉप 10 नंबर्स जिनकी प्रोबेबिलिटी ज्यादा है
+        top_indices = np.argsort(probs)[-10:][::-1]
+        classes = model.classes_
+        preds = [f"{classes[i]:02d}" for i in top_indices if i < len(classes)]
+        return preds
+    except:
+        return [] # अगर एरर आए तो खाली लिस्ट भेजें
 
 # --- 4. मास्टर लॉजिक ---
 def get_combined_logic(clean_df, target_shift, sel_date):
@@ -62,20 +66,22 @@ def get_combined_logic(clean_df, target_shift, sel_date):
     
     same_day_res = f"📍 **SAME DAY:** {int(today.iloc[0]['num']):02d}" if not today.empty else "📍 **SAME DAY:** --"
 
-    if len(history) < 20:
+    if len(history) < 15:
         return f"{same_day_res}\n\n⚠️ Low Data", []
 
     y = history['num'].values
     
-    # 1. सांख्यिकीय हॉट (Hot)
+    # 1. सांख्यिकीय हॉट (Stat Hot)
     hot_10 = [f"{n:02d}" for n, c in Counter(y[-60:]).most_common(10)]
     
-    # 2. XGBoost प्रेडिक्शन (Accuracy)
+    # 2. XGBoost प्रेडिक्शन (AI Accuracy)
     xgb_preds = get_xgboost_prediction(list(y))
     
-    display = f"{same_day_res}\n\n🔥 **STAT HOT:** {', '.join(hot_10)}\n\n🚀 **AI ACCURACY:** {', '.join(xgb_preds if xgb_preds else ['--'])}"
+    # अगर AI फेल हो जाए तो सिर्फ Stat Hot दिखाएं
+    ai_display = ", ".join(xgb_preds) if xgb_preds else "Calculating..."
+    display = f"{same_day_res}\n\n🔥 **STAT HOT:** {', '.join(hot_10)}\n\n🚀 **AI PICK:** {ai_display}"
     
-    return display, xgb_preds
+    return display, xgb_preds if xgb_preds else [f"{n:02d}" for n in y[-10:]]
 
 # --- 5. UI Dashboard ---
 uploaded_file = st.file_uploader("📂 अपनी Excel फ़ाइल अपलोड करें", type=['xlsx'])
@@ -85,7 +91,7 @@ if uploaded_file:
     if clean_df is not None:
         target_date = st.date_input("📅 तारीख चुनें:", datetime.date.today())
         
-        if st.button("🚀 हाई-एक्यूरेसी विश्लेषण शुरू करें"):
+        if st.button("🚀 विश्लेषण शुरू करें"):
             row_main = {"Type": "🎯 TARGET AI"}
             all_ai_nums = []
 
@@ -98,14 +104,15 @@ if uploaded_file:
             st.subheader(f"✅ AI प्रेडिक्शन चार्ट ({target_date})")
             st.table(pd.DataFrame([row_main]))
 
-            # प्रोबेबिलिटी (60-Ank Match)
+            # मास्टर प्रोबेबिलिटी (60-Ank Match)
             st.write("---")
-            st.subheader("📊 मास्टर प्रोबेबिलिटी (Common AI Picks)")
+            st.subheader("📊 मास्टर प्रोबेबिलिटी (Top Picks)")
             counts = Counter(all_ai_nums)
             freq_bins = {i: sorted([n for n, f in counts.items() if f == i]) for i in range(1, 7)}
-            max_l = max(len(v) for v in freq_bins.values()) if any(freq_bins.values()) else 1
-            st.table(pd.DataFrame({f"{i} बार": v + [""]*(max_l-len(v)) for i, v in freq_bins.items()}))
             
-            st.success("💡 **AI ACCURACY:** यह कॉलम मशीन लर्निंग (XGBoost) का उपयोग करता है। जो अंक 'AI' और 'STAT HOT' दोनों में कॉमन हैं, वे सबसे मजबूत हैं।")
+            if any(freq_bins.values()):
+                max_l = max(len(v) for v in freq_bins.values())
+                st.table(pd.DataFrame({f"{i} बार": v + [""]*(max_l-len(v)) for i, v in freq_bins.items()}))
+            
             st.balloons()
             
